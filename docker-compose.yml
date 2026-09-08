@@ -1,0 +1,24 @@
+services:
+  jellyfin-discord-bot:
+    build: .
+    container_name: jellyfin-discord-bot
+    env_file: .env
+    # Run as your own user so ./data stays readable on the host.
+    # Change if `id -u` on your box isn't 1000.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      DB_PATH: /data/bot.db
+    volumes:
+      - ./data:/data
+      # /imdb renames files on the movie share, so the container needs it at
+      # the same path the script expects. Both sides come from MOVIES_LOCAL_PATH
+      # in .env, so the mount and the script can never disagree.
+      # Read-write on purpose: renaming is the whole point of that command.
+      # Change to `:ro` at the end to keep the bot read-only (dry runs only).
+      - ${MOVIES_LOCAL_PATH:-/mnt/movies}:${MOVIES_LOCAL_PATH:-/mnt/movies}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

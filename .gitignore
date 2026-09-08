@@ -1,0 +1,27 @@
+# ---- secrets and state — NEVER commit these ----------------------------
+# .env holds the Discord bot token and the Jellyfin/TMDb API keys.
+# Anyone with the token controls the bot. .env.example is the safe template
+# and is deliberately NOT ignored.
+.env
+.env.*
+!.env.example
+
+# SQLite state: guild IDs, channel IDs, and every item already announced.
+data/
+
+# ---- run artefacts -----------------------------------------------------
+# Written by jellyfin_imdb_rename.py when WRITE_REPORT_FILES = True.
+imdb_report.csv
+imdb_rename.log
+
+# ---- python ------------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# ---- editors / os ------------------------------------------------------
+*.bak
+*.swp
+.DS_Store
