@@ -360,3 +360,9 @@ and everything is printed to the terminal either way.
 
 `.env` and `data/` hold your token, API keys and database. Both are gitignored
 — **never** copy them to anyone else.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Do what you like with it.
