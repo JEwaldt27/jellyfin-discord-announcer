@@ -42,7 +42,8 @@ and cannot be overridden from Discord's **Integrations** settings.
 
 - A machine that runs Docker (the "bot host"). It does **not** have to be the
   Jellyfin box.
-- Your Jellyfin server, reachable from the bot host.
+- **Jellyfin 12.0 or newer**, reachable from the bot host. See
+  [Jellyfin version notes](#jellyfin-version-notes) below.
 - **For `/imdb` only:** the movie files mounted on the bot host — SMB, NFS,
   local disk, anything — with write access. Skip this and everything except
   `/imdb` still works.
@@ -230,6 +231,30 @@ it's attached as a file.
 
 A movie with no IMDb ID anywhere falls back to `[tmdbid-12345]`, which Jellyfin
 reads just as happily.
+
+---
+
+## Jellyfin version notes
+
+Developed and tested against **Jellyfin 12.0.0**.
+
+Both the announcer and `/imdb` pass `collapseBoxSetItems=false` on every item
+query. This matters if you use collections: Jellyfin 12 changed the default,
+and without it a `Movie` query returns the **collection** in place of every
+movie inside it. On a library with 21 genre collections that turns 383 movies
+into 21 collections plus the handful belonging to no collection — which means
+the announcer posts your collections as if they were new films, real new
+movies go unnoticed, and `/imdb` reports `FILE NOT FOUND` for every collection
+because a collection has no media file.
+
+`/imdb` additionally discards anything whose type isn't `Movie`, or that is
+flagged as a folder, before it reaches the rename step. The query shouldn't
+return such an item, but renaming a directory isn't a failure worth trusting a
+server-side filter to prevent.
+
+Older Jellyfin releases aren't tested. `collapseBoxSetItems` is a long-standing
+API parameter, so 10.x will likely work, but that's untested rather than
+supported.
 
 ---
 

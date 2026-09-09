@@ -21,6 +21,10 @@ __pycache__/
 venv/
 .venv/
 
+# ---- local operator notes ----------------------------------------------
+# Host-specific runbooks. Useful on your own box, meaningless to anyone else.
+RESTART.txt
+
 # ---- editors / os ------------------------------------------------------
 *.bak
 *.swp
