@@ -204,13 +204,23 @@ class Jellyfin:
         return info.get("ServerName", "?"), info.get("Version", "?")
 
     def movies(self, page_size=500):
-        """Yield every movie as a dict. Paginated — safe on huge libraries."""
+        """
+        Yield every movie as a dict. Paginated — safe on huge libraries.
+
+        collapseBoxSetItems=false is load-bearing. Jellyfin 12 changed the
+        default: with collections in the library, a plain includeItemTypes
+        =Movie query replaces every movie that belongs to a collection with
+        the BoxSet itself. On a library with 21 genre collections that turned
+        383 movies into 21 BoxSets plus the 4 movies in no collection — and
+        BoxSets have no media file, so every one became a FILE NOT FOUND.
+        """
         start = 0
         while True:
             data = self._get(
                 "/Items",
                 recursive="true",
                 includeItemTypes="Movie",
+                collapseBoxSetItems="false",
                 fields="ProviderIds,Path,ProductionYear,MediaSources",
                 enableImages="false",
                 startIndex=start,
@@ -222,6 +232,14 @@ class Jellyfin:
             if not items:
                 break
             for it in items:
+                # Belt and braces. The query above should only ever return
+                # real movies, but a folder-ish item reaching the rename phase
+                # means renaming a directory, so refuse it here rather than
+                # trusting the server to keep filtering correctly.
+                if it.get("Type") not in (None, "Movie"):
+                    continue
+                if it.get("IsFolder"):
+                    continue
                 yield it
             start += len(items)
             if start >= data.get("TotalRecordCount", 0):

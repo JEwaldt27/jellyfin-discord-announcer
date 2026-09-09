@@ -101,6 +101,10 @@ class JellyfinClient:
             "/Items",
             recursive="true",
             includeItemTypes=include_types,
+            # Jellyfin 12 collapses movies into their collections by default,
+            # which returns BoxSets in place of the movies they contain. Those
+            # then get announced as if they were new films. Always off.
+            collapseBoxSetItems="false",
             fields=fields or None,
             enableImages="false",
             startIndex=start,
