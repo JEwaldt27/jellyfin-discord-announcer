@@ -10,6 +10,7 @@ import asyncio
 import io
 import logging
 import os
+import platform
 import re
 import shlex
 import sys
@@ -29,6 +30,7 @@ from db import (
 )
 from jellyfin import JellyfinClient, JellyfinError
 from scanner import run_scan
+from version import BUILD_DATE, GIT_COMMIT, STARTED_AT, __version__, source_fingerprint
 
 try:  # convenience when running outside Docker
     from dotenv import load_dotenv
@@ -244,6 +246,10 @@ HELP_DETAIL = {
     "rebaseline": "Forgets everything announced so far and re-records the "
                   "library as the new starting point. Nothing is posted for "
                   "existing media. Needs `confirm: True`.",
+    "version": "Which build is running — version, commit, and a fingerprint of "
+               "the running source. Compare the fingerprint to `python "
+               "version.py` on a checkout to confirm the container is actually "
+               "running that code.",
     "help": "This message.",
 }
 
@@ -557,6 +563,40 @@ def register_commands(bot: Announcer) -> None:
             await interaction.followup.send(embed=embed, file=note, ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @tree.command(name="version", description="Which build of the bot is running")
+    @app_commands.guild_only()
+    async def version(interaction: discord.Interaction) -> None:
+        embed = discord.Embed(
+            title="Finster — build info", colour=discord.Color.blurple()
+        )
+        embed.add_field(name="Version", value=f"`{__version__}`", inline=True)
+        embed.add_field(
+            name="Commit",
+            value=f"`{GIT_COMMIT}`" if GIT_COMMIT else "*not baked in*",
+            inline=True,
+        )
+        embed.add_field(
+            name="Code fingerprint", value=f"`{source_fingerprint()}`", inline=True
+        )
+        embed.add_field(name="Built", value=BUILD_DATE or "*unknown*", inline=True)
+        embed.add_field(name="Started", value=relative(STARTED_AT), inline=True)
+        embed.add_field(
+            name="Uptime",
+            value=format_interval(int((utcnow() - STARTED_AT).total_seconds() // 60)),
+            inline=True,
+        )
+        embed.add_field(
+            name="Runtime",
+            value=f"Python {platform.python_version()} · "
+                  f"discord.py {discord.__version__}",
+            inline=False,
+        )
+        embed.set_footer(
+            text="Fingerprint should match `python version.py` run on a checkout "
+                 "of the same code."
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tree.command(
         name="rebaseline",

@@ -1,6 +1,12 @@
 services:
   jellyfin-discord-bot:
-    build: .
+    build:
+      context: .
+      # Picked up from the shell that runs `docker compose build`. Unset is
+      # fine - /version falls back to the source fingerprint.
+      args:
+        GIT_COMMIT: "${GIT_COMMIT:-}"
+        BUILD_DATE: "${BUILD_DATE:-}"
     container_name: jellyfin-discord-bot
     env_file: .env
     # Run as your own user so ./data stays readable on the host.

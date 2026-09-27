@@ -23,6 +23,7 @@ can use. All replies are private (only you see them).
 |---|---|---|
 | `/help` | List every command and the roles they need | anyone |
 | `/status` | Settings, last/next scan, item counts, Jellyfin health | anyone |
+| `/version` | Which build is running: version, commit, source fingerprint, uptime | anyone |
 | `/start` | Run a scan right now | anyone |
 | `/channels movies <#channel>` | Where new movies get announced | **role** |
 | `/channels shows <#channel>` | Where new TV episodes get announced | **role** |
@@ -31,6 +32,32 @@ can use. All replies are private (only you see them).
 | `/rebaseline confirm:True` | Forget what's been announced, re-record the library as the new baseline | **role** |
 
 **role** = the Discord role named in `ADMIN_ROLE` (default `Media Admin`).
+
+### Knowing which build is running
+
+`/version` reports the hand-set version from `version.py`, the git commit if the
+image was built with one, and a **source fingerprint** — a digest of the Python
+files the container actually loaded.
+
+The fingerprint is the one that can't lie. A version string reports what someone
+remembered to bump; the fingerprint is derived from the running code. To confirm
+the container is running a given checkout, run this on that checkout and compare:
+
+```bash
+python version.py
+```
+
+Line endings are normalised, so a CRLF checkout on Windows and the LF copy in the
+image agree.
+
+To bake in the commit and build date, pass them when building:
+
+```bash
+GIT_COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%MZ) docker compose up -d --build
+```
+
+Leave them out and `/version` shows *not baked in* for the commit — the
+fingerprint still works.
 
 Anything that changes state needs the role; read-only commands are open. This
 is enforced *by the bot*, which means it also applies to server administrators
