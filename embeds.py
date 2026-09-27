@@ -60,7 +60,13 @@ def format_runtime(ticks: int | None) -> str | None:
 def detail_url(public_url: str | None, item_id: str, server_id: str | None) -> str | None:
     if not public_url:
         return None
-    url = f"{public_url.rstrip('/')}/web/index.html#!/details?id={item_id}"
+    base = public_url.rstrip("/")
+    # Discord rejects the whole embed with a 400 if the url has no scheme, so a
+    # malformed setting must cost us the link, never the post.
+    if not base.lower().startswith(("http://", "https://")):
+        log.warning("Ignoring JELLYFIN_PUBLIC_URL %r - it needs http:// or https://", base)
+        return None
+    url = f"{base}/web/index.html#!/details?id={item_id}"
     if server_id:
         url += f"&serverId={server_id}"
     return url

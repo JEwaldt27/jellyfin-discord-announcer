@@ -671,6 +671,13 @@ def main() -> None:
     api_key = _require("JELLYFIN_API_KEY")
 
     public_url = os.environ.get("JELLYFIN_PUBLIC_URL", "").strip() or None
+    if public_url and not public_url.lower().startswith(("http://", "https://")):
+        public_url = "https://" + public_url
+        log.warning(
+            "JELLYFIN_PUBLIC_URL had no scheme - assuming %s. "
+            "Set it explicitly in .env if that's wrong.",
+            public_url,
+        )
     db_path = os.environ.get("DB_PATH", "/data/bot.db")
     try:
         max_posts = max(1, int(os.environ.get("MAX_POSTS_PER_SCAN", "20")))

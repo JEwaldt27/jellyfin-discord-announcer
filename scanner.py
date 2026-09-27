@@ -32,6 +32,7 @@ class ScanResult:
     episodes_posted: int = 0
     extra_movies: int = 0
     extra_episodes: int = 0
+    failed_posts: int = 0
     skipped: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -48,10 +49,13 @@ class ScanResult:
             return f"error: {self.error}"
         if self.baseline:
             return f"baseline ({self.baseline_count} items recorded)"
-        return (
+        line = (
             f"ok ({self.movies_posted} movies, {self.seasons_posted} seasons"
             f"/{self.episodes_posted} episodes)"
         )
+        if self.failed_posts:
+            line = f"{self.failed_posts} POST(S) REJECTED BY DISCORD; " + line
+        return line
 
     def summary(self) -> str:
         if self.error:
@@ -78,8 +82,18 @@ class ScanResult:
 
         if lines:
             out = "✅ Posted " + " and ".join(lines) + "."
+        elif self.failed_posts:
+            out = "⚠️ Scan found new media but couldn't post it."
         else:
             out = "✅ Scan complete — nothing new since the last one."
+
+        if self.failed_posts:
+            out += (
+                f"\n❌ Discord rejected **{self.failed_posts}** post"
+                f"{'s' if self.failed_posts != 1 else ''} — check "
+                "`docker compose logs` for the reason. Nothing was marked as seen, "
+                "so they'll be retried on the next scan."
+            )
 
         if self.extra_movies or self.extra_episodes:
             out += (
@@ -245,6 +259,8 @@ async def run_scan(
             result.movies_posted += 1
             budget -= 1
             await asyncio.sleep(POST_DELAY)
+        else:
+            result.failed_posts += 1
 
     # -------------------------------------------------------------- shows
     series_cache: dict[str, dict | None] = {}
@@ -284,6 +300,8 @@ async def run_scan(
             result.episodes_posted += len(episode_list)
             budget -= 1
             await asyncio.sleep(POST_DELAY)
+        else:
+            result.failed_posts += 1
 
     # ------------------------------------------------------------ overflow
     if result.extra_movies and movie_channel is not None:
