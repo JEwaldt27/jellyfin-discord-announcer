@@ -28,6 +28,9 @@ from db import (
     Database,
     utcnow,
 )
+import announce as announcements
+from announce import AnnounceError
+from httpapi import DEFAULT_PORT as ANNOUNCE_DEFAULT_PORT, AnnounceAPI
 from jellyfin import JellyfinClient, JellyfinError
 from scanner import run_scan
 from version import BUILD_DATE, GIT_COMMIT, STARTED_AT, __version__, source_fingerprint
@@ -238,6 +241,14 @@ HELP_DETAIL = {
                 "Minimum 15 minutes, default 24 hours.",
     "channels movies": "Channel where new movie announcements are posted.",
     "channels shows": "Channel where new TV announcements are posted.",
+    "channels announce": "Channel where `/announce` and `/maintenance` notices "
+                         "are posted.",
+    "announce": "Post a free-text announcement to the announcement channel.",
+    "maintenance start": "Tell everyone the server is going down, optionally with "
+                         "how long you expect to be — the time shows in each "
+                         "reader's own timezone.",
+    "maintenance done": "Post the all-clear, with how long the downtime actually "
+                        "lasted and a link back to the original notice.",
     "imdb": "Looks up an IMDb ID for every movie Jellyfin has none for, then "
             "renames the files to `Title (Year) [imdbid-tt…]`. Scans the "
             "Jellyfin library first, then reports what it found. **Dry run "
@@ -278,13 +289,29 @@ class Announcer(discord.Client):
         # The rename script mutates files on the share. One at a time, server
         # wide — it operates on the whole Jellyfin library, not per guild.
         self._imdb_lock = asyncio.Lock()
+        self.api: AnnounceAPI | None = None
 
     async def setup_hook(self) -> None:
         await self.db.connect()
         self.ticker.start()
 
+        # Fail closed: no token, no endpoint. An unauthenticated listener that
+        # can post to Discord is worse than not having the feature at all.
+        token = os.environ.get("ANNOUNCE_TOKEN", "").strip()
+        if not token:
+            log.info("ANNOUNCE_TOKEN is not set - the HTTP announce endpoint stays off")
+            return
+        try:
+            port = int(os.environ.get("ANNOUNCE_PORT", ANNOUNCE_DEFAULT_PORT))
+        except ValueError:
+            port = ANNOUNCE_DEFAULT_PORT
+        self.api = AnnounceAPI(self, token, port)
+        await self.api.start()
+
     async def close(self) -> None:
         await super().close()
+        if self.api is not None:
+            await self.api.stop()
         await self.jf.close()
         await self.db.close()
 
@@ -475,8 +502,23 @@ def register_commands(bot: Announcer) -> None:
             inline=True,
         )
         embed.add_field(
+            name="Announce channel",
+            value=f"<#{cfg.announce_channel_id}>"
+            if cfg.announce_channel_id
+            else "*not set*",
+            inline=True,
+        )
+        embed.add_field(
             name="Scan rate", value=format_interval(cfg.scan_interval_min), inline=True
         )
+        if cfg.in_maintenance:
+            embed.add_field(
+                name="⚠️ Maintenance in progress",
+                value=f"{cfg.maintenance_reason}\nStarted "
+                      f"{relative(cfg.maintenance_started_at)} — "
+                      "run `/maintenance done` when you're back.",
+                inline=False,
+            )
         embed.add_field(name="Last scan", value=relative(cfg.last_scan_at), inline=True)
         embed.add_field(
             name="Next scan",
@@ -641,10 +683,12 @@ def register_commands(bot: Announcer) -> None:
             )
             return
 
-        if kind == "movies":
-            await bot.db.set_movie_channel(interaction.guild.id, channel.id)
-        else:
-            await bot.db.set_show_channel(interaction.guild.id, channel.id)
+        setter = {
+            "movies": bot.db.set_movie_channel,
+            "shows": bot.db.set_show_channel,
+            "announcements": bot.db.set_announce_channel,
+        }[kind]
+        await setter(interaction.guild.id, channel.id)
 
         await interaction.response.send_message(
             f"✅ New {kind} will be announced in {channel.mention}.", ephemeral=True
@@ -666,7 +710,166 @@ def register_commands(bot: Announcer) -> None:
     ) -> None:
         await _set_channel(interaction, channel, "shows")
 
+    @channels.command(
+        name="announce", description="Where announcements and maintenance notices go"
+    )
+    @app_commands.describe(channel="Channel to post announcements in")
+    @app_commands.checks.has_role(ADMIN_ROLE)
+    async def channels_announce(
+        interaction: discord.Interaction, channel: discord.TextChannel
+    ) -> None:
+        await _set_channel(interaction, channel, "announcements")
+
     tree.add_command(channels)
+
+    # ------------------------------------------------- announcements
+
+    async def _announce_target(interaction: discord.Interaction):
+        """The configured announcement channel, or None after replying why not."""
+        channel = await announcements.announce_channel_for(bot.db, interaction.guild)
+        if channel is None:
+            await interaction.response.send_message(
+                "❌ No announcement channel set. Run `/channels announce` first.",
+                ephemeral=True,
+            )
+            return None
+
+        missing = missing_permissions(interaction.guild, channel)
+        if missing:
+            await interaction.response.send_message(
+                f"❌ I can't post in {channel.mention} — missing: "
+                + ", ".join(f"**{m}**" for m in missing),
+                ephemeral=True,
+            )
+            return None
+        return channel
+
+    @tree.command(name="announce", description="Post an announcement to the channel")
+    @app_commands.describe(
+        message="What to say", title="Optional heading instead of 'Announcement'"
+    )
+    @app_commands.guild_only()
+    @app_commands.checks.has_role(ADMIN_ROLE)
+    async def announce_cmd(
+        interaction: discord.Interaction, message: str, title: str | None = None
+    ) -> None:
+        channel = await _announce_target(interaction)
+        if channel is None:
+            return
+        try:
+            embed = announcements.build_announcement(
+                message, title=title, author=interaction.user.display_name
+            )
+            posted = await announcements.send(channel, embed)
+        except AnnounceError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"✅ Posted in {channel.mention}. [Jump to it]({posted.jump_url})",
+            ephemeral=True,
+        )
+
+    maintenance = app_commands.Group(
+        name="maintenance",
+        description="Tell people the server is going down, and when it's back",
+        guild_only=True,
+    )
+
+    @maintenance.command(name="start", description="Announce that maintenance is starting")
+    @app_commands.describe(
+        reason="What you're doing, e.g. 'system updates'",
+        duration="How long you expect to be down: 20m, 2h, 1d",
+    )
+    @app_commands.checks.has_role(ADMIN_ROLE)
+    async def maintenance_start(
+        interaction: discord.Interaction, reason: str, duration: str | None = None
+    ) -> None:
+        cfg = await bot.db.get_config(interaction.guild.id)
+        if cfg.in_maintenance:
+            await interaction.response.send_message(
+                "❌ Maintenance is already in progress. Run `/maintenance done` first.",
+                ephemeral=True,
+            )
+            return
+
+        channel = await _announce_target(interaction)
+        if channel is None:
+            return
+
+        try:
+            back_at = None
+            if duration:
+                back_at = utcnow() + announcements.parse_duration(duration)
+            embed = announcements.build_maintenance(
+                reason, back_at=back_at, author=interaction.user.display_name
+            )
+            posted = await announcements.send(channel, embed)
+        except AnnounceError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        await bot.db.start_maintenance(
+            interaction.guild.id,
+            reason=reason.strip(),
+            channel_id=channel.id,
+            message_id=posted.id,
+        )
+        await interaction.response.send_message(
+            f"✅ Posted in {channel.mention}. Run `/maintenance done` when you're back. "
+            f"[Jump to it]({posted.jump_url})",
+            ephemeral=True,
+        )
+
+    @maintenance.command(name="done", description="Announce that the server is back")
+    @app_commands.describe(note="Optional extra detail for the all-clear")
+    @app_commands.checks.has_role(ADMIN_ROLE)
+    async def maintenance_done(
+        interaction: discord.Interaction, note: str | None = None
+    ) -> None:
+        guild = interaction.guild
+        cfg = await bot.db.get_config(guild.id)
+        if not cfg.in_maintenance:
+            await interaction.response.send_message(
+                "❌ No maintenance is in progress.", ephemeral=True
+            )
+            return
+
+        # Prefer the channel the notice went to, so the all-clear lands with it
+        # even if the announcement channel has been changed since.
+        channel = announcements.resolve_channel(guild, cfg.maintenance_channel_id)
+        if channel is None:
+            channel = await _announce_target(interaction)
+            if channel is None:
+                return
+
+        jump = None
+        if cfg.maintenance_channel_id and cfg.maintenance_message_id:
+            jump = (
+                f"https://discord.com/channels/{guild.id}/"
+                f"{cfg.maintenance_channel_id}/{cfg.maintenance_message_id}"
+            )
+
+        try:
+            embed = announcements.build_resolved(
+                note=note,
+                started_at=cfg.maintenance_started_at,
+                reason=cfg.maintenance_reason,
+                jump_url=jump,
+                author=interaction.user.display_name,
+            )
+            posted = await announcements.send(channel, embed)
+        except AnnounceError as exc:
+            await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+            return
+
+        await bot.db.clear_maintenance(guild.id)
+        await interaction.response.send_message(
+            f"✅ All-clear posted in {channel.mention}. [Jump to it]({posted.jump_url})",
+            ephemeral=True,
+        )
+
+    tree.add_command(maintenance)
 
     @tree.error
     async def on_command_error(

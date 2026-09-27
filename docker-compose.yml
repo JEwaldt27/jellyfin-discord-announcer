@@ -14,6 +14,19 @@ services:
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       DB_PATH: /data/bot.db
+    ports:
+      # The announce endpoint. ANNOUNCE_BIND is the HOST address the port is
+      # published on, and 127.0.0.1 means only this box can reach it.
+      #
+      # Setting it to 0.0.0.0 opens the port to the whole LAN *and* bypasses
+      # ufw: Docker writes its own iptables rules in front of the firewall, so
+      # `ufw status` will claim the port is blocked while it is in fact open.
+      # The endpoint is plain HTTP, so the bearer token would also cross the
+      # network in cleartext. Change it only deliberately.
+      #
+      # Nothing listens at all unless ANNOUNCE_TOKEN is set in .env; without
+      # it this published port just refuses connections.
+      - "${ANNOUNCE_BIND:-127.0.0.1}:${ANNOUNCE_PORT:-8765}:${ANNOUNCE_PORT:-8765}"
     volumes:
       - ./data:/data
       # /imdb renames files on the movie share, so the container needs it at

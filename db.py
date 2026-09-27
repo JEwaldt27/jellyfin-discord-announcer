@@ -23,11 +23,16 @@ CREATE TABLE IF NOT EXISTS guild_config (
     guild_id          INTEGER PRIMARY KEY,
     movie_channel_id  INTEGER,
     show_channel_id   INTEGER,
+    announce_channel_id INTEGER,
     scan_interval_min INTEGER NOT NULL DEFAULT 1440,
     baselined         INTEGER NOT NULL DEFAULT 0,
     last_scan_at      TEXT,
     next_scan_at      TEXT,
-    last_scan_status  TEXT
+    last_scan_status  TEXT,
+    maintenance_started_at TEXT,
+    maintenance_reason     TEXT,
+    maintenance_channel_id INTEGER,
+    maintenance_message_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS seen_items (
@@ -42,6 +47,17 @@ CREATE TABLE IF NOT EXISTS seen_items (
 
 CREATE INDEX IF NOT EXISTS idx_seen_guild_type ON seen_items (guild_id, item_type);
 """
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS silently
+# does nothing on a database that already has the table, so an existing bot.db
+# would never gain these without an explicit ALTER.
+_ADDED_COLUMNS = {
+    "announce_channel_id": "INTEGER",
+    "maintenance_started_at": "TEXT",
+    "maintenance_reason": "TEXT",
+    "maintenance_channel_id": "INTEGER",
+    "maintenance_message_id": "INTEGER",
+}
 
 
 def utcnow() -> datetime:
@@ -66,11 +82,20 @@ class GuildConfig:
     guild_id: int
     movie_channel_id: int | None = None
     show_channel_id: int | None = None
+    announce_channel_id: int | None = None
     scan_interval_min: int = DEFAULT_SCAN_MINUTES
     baselined: bool = False
     last_scan_at: datetime | None = None
     next_scan_at: datetime | None = None
     last_scan_status: str | None = None
+    maintenance_started_at: datetime | None = None
+    maintenance_reason: str | None = None
+    maintenance_channel_id: int | None = None
+    maintenance_message_id: int | None = None
+
+    @property
+    def in_maintenance(self) -> bool:
+        return self.maintenance_started_at is not None
 
     def is_due(self, now: datetime | None = None) -> bool:
         now = now or utcnow()
@@ -88,7 +113,22 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(SCHEMA)
         await self._conn.commit()
+        await self._migrate()
         log.info("Database ready at %s", self.path)
+
+    async def _migrate(self) -> None:
+        """Add any columns a pre-existing database is missing."""
+        async with self._conn.execute("PRAGMA table_info(guild_config)") as cur:
+            existing = {row["name"] for row in await cur.fetchall()}
+
+        for column, column_type in _ADDED_COLUMNS.items():
+            if column in existing:
+                continue
+            await self._conn.execute(
+                f"ALTER TABLE guild_config ADD COLUMN {column} {column_type}"
+            )
+            log.info("Migrated guild_config: added %s", column)
+        await self._conn.commit()
 
     async def close(self) -> None:
         if self._conn is not None:
@@ -122,11 +162,16 @@ class Database:
             guild_id=row["guild_id"],
             movie_channel_id=row["movie_channel_id"],
             show_channel_id=row["show_channel_id"],
+            announce_channel_id=row["announce_channel_id"],
             scan_interval_min=row["scan_interval_min"],
             baselined=bool(row["baselined"]),
             last_scan_at=from_iso(row["last_scan_at"]),
             next_scan_at=from_iso(row["next_scan_at"]),
             last_scan_status=row["last_scan_status"],
+            maintenance_started_at=from_iso(row["maintenance_started_at"]),
+            maintenance_reason=row["maintenance_reason"],
+            maintenance_channel_id=row["maintenance_channel_id"],
+            maintenance_message_id=row["maintenance_message_id"],
         )
 
     async def _update(self, guild_id: int, **columns) -> None:
@@ -143,6 +188,37 @@ class Database:
 
     async def set_show_channel(self, guild_id: int, channel_id: int) -> None:
         await self._update(guild_id, show_channel_id=channel_id)
+
+    async def set_announce_channel(self, guild_id: int, channel_id: int) -> None:
+        await self._update(guild_id, announce_channel_id=channel_id)
+
+    # ----------------------------------------------------------- maintenance
+
+    async def start_maintenance(
+        self,
+        guild_id: int,
+        *,
+        reason: str,
+        channel_id: int,
+        message_id: int | None,
+        started_at: datetime | None = None,
+    ) -> None:
+        await self._update(
+            guild_id,
+            maintenance_started_at=to_iso(started_at or utcnow()),
+            maintenance_reason=reason,
+            maintenance_channel_id=channel_id,
+            maintenance_message_id=message_id,
+        )
+
+    async def clear_maintenance(self, guild_id: int) -> None:
+        await self._update(
+            guild_id,
+            maintenance_started_at=None,
+            maintenance_reason=None,
+            maintenance_channel_id=None,
+            maintenance_message_id=None,
+        )
 
     async def set_interval(self, guild_id: int, minutes: int) -> GuildConfig:
         """Change the scan cadence and re-anchor the next run to the last one."""

@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py db.py embeds.py jellyfin.py scanner.py version.py ./
+COPY announce.py bot.py db.py embeds.py httpapi.py jellyfin.py scanner.py version.py ./
 # Driven by the /imdb slash command, run as a subprocess.
 COPY jellyfin_imdb_rename.py ./
 

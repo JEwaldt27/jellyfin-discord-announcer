@@ -25,6 +25,10 @@ can use. All replies are private (only you see them).
 | `/status` | Settings, last/next scan, item counts, Jellyfin health | anyone |
 | `/version` | Which build is running: version, commit, source fingerprint, uptime | anyone |
 | `/start` | Run a scan right now | anyone |
+| `/announce <message> [title]` | Post an announcement | **role** |
+| `/maintenance start <reason> [duration]` | Say the server is going down | **role** |
+| `/maintenance done [note]` | Post the all-clear with actual downtime | **role** |
+| `/channels announce <#channel>` | Where announcements and notices go | **role** |
 | `/channels movies <#channel>` | Where new movies get announced | **role** |
 | `/channels shows <#channel>` | Where new TV episodes get announced | **role** |
 | `/scanrate <interval>` | How often to scan: `30m`, `6h`, `24h`, `7d`. Default 24h, min 15m | **role** |
@@ -59,6 +63,52 @@ GIT_COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%MZ) 
 
 Leave them out and `/version` shows *not baked in* for the commit — the
 fingerprint still works.
+
+## Announcing from the shell
+
+`/announce` and `/maintenance` work from Discord. The same thing is available
+over HTTP, so a notice can be fired from the terminal you're already in when
+running updates:
+
+```bash
+./announce.sh "Jellyfin down ~20 min for system updates"
+```
+
+```bash
+./announce.sh --maintenance 20m "System updates"
+```
+
+```bash
+./announce.sh --done "Back up, all libraries rescanned."
+```
+
+`--maintenance` records that a window is open, so `/status` shows it and the
+all-clear reports how long the downtime actually lasted.
+
+Set `ANNOUNCE_TOKEN` in `.env` to switch this on:
+
+```bash
+openssl rand -hex 32
+```
+
+### Security
+
+- **No token, no listener.** Leave `ANNOUNCE_TOKEN` blank and no socket is
+  opened at all. The feature is off until you opt in.
+- **Bound to `127.0.0.1` by default**, so only the box itself can reach it.
+  Anyone who could use it already has a shell there — and could run
+  `docker exec` anyway.
+- **Anyone holding the token can post as the bot.** Treat it like the Discord
+  token.
+- Setting `ANNOUNCE_BIND=0.0.0.0` exposes the port to your whole LAN **and
+  bypasses ufw** — Docker writes iptables rules in front of the firewall, so
+  `ufw status` will claim the port is closed while it is open. The endpoint is
+  plain HTTP, so the token would also cross the network in cleartext. Don't put
+  it behind your reverse proxy.
+
+A token holder can only post to the channel set by `/channels announce` and
+toggle maintenance state. They cannot read Discord messages, change scan
+settings, reach Jellyfin, trigger `/imdb`, or read the database.
 
 ## Updating
 
