@@ -50,7 +50,8 @@ python version.py
 Line endings are normalised, so a CRLF checkout on Windows and the LF copy in the
 image agree.
 
-To bake in the commit and build date, pass them when building:
+`deploy.sh` bakes in the commit and build date for you. Building by hand instead,
+pass them yourself:
 
 ```bash
 GIT_COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%MZ) docker compose up -d --build
@@ -58,6 +59,27 @@ GIT_COMMIT=$(git rev-parse --short HEAD) BUILD_DATE=$(date -u +%Y-%m-%dT%H:%MZ) 
 
 Leave them out and `/version` shows *not baked in* for the commit — the
 fingerprint still works.
+
+## Updating
+
+Changes are made on a workstation and pushed to GitHub; the server only pulls.
+
+On the workstation:
+
+```bash
+git add -A && git commit -m "Describe the change" && git push
+```
+
+Then deploy — pulls, rebuilds with the commit baked in, and tails the logs:
+
+```bash
+ssh jewaldt@192.168.12.234 './jellyfin-discord-bot/deploy.sh'
+```
+
+It refuses to run if the server's checkout has uncommitted edits, since a box
+quietly diverging from the repo is exactly the failure that's hard to spot.
+Confirm the deploy landed by comparing `/version`'s fingerprint against
+`python version.py` on your checkout.
 
 Anything that changes state needs the role; read-only commands are open. This
 is enforced *by the bot*, which means it also applies to server administrators
@@ -313,10 +335,10 @@ retries next scan.
 ## Day to day
 
 ```bash
+./deploy.sh                         # pull, rebuild, restart (see Updating)
 docker compose logs -f              # follow logs
 docker compose restart              # restart
 docker compose down                 # stop
-docker compose up -d --build        # apply code changes
 cp data/bot.db data/bot.db.backup   # back up state
 ```
 

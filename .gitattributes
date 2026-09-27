@@ -1,0 +1,5 @@
+# Shell scripts must keep LF endings. Checked out with CRLF on a Windows clone
+# and then run on Linux, the shebang becomes "/usr/bin/env bash\r" and the
+# script dies with "bad interpreter". This holds regardless of each machine's
+# core.autocrlf setting.
+*.sh text eol=lf
