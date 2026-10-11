@@ -44,22 +44,35 @@ can use. All replies are private (only you see them).
 Unlike every other reply, it posts **to the channel** rather than privately —
 a leaderboard nobody else can see isn't much of a leaderboard.
 
-The number is an estimate, and the embed says so. Jellyfin core keeps no log of
-playback events; per user per item it stores only `Played`, `PlayCount`,
-`PlaybackPositionTicks` and `LastPlayedDate` — and that date is just the *most
-recent* play. So:
+It reads from one of two sources, and the footer tells you which.
+
+**Playback Reporting plugin (exact).** It logs every play with a real duration,
+so repeats and abandoned playback are all counted correctly. Used whenever the
+plugin has enough history to cover the requested window.
+
+**Jellyfin core (estimated).** The fallback, used when the plugin is absent or
+hasn't been collecting long enough. Core keeps no log of playback events — per
+user per item it stores only `Played`, `PlayCount`, `PlaybackPositionTicks` and
+`LastPlayedDate`, and that date is just the *most recent* play. So:
 
 - Something watched three times this week counts once. `PlayCount` is all-time
   with no dates attached, so it can't correct for that.
 - Anything marked played counts its full runtime, even if it was abandoned
   after ten minutes or a whole season was marked watched in bulk.
 - Part-watched items contribute their real position instead. That's the one
-  part of the figure that is exact.
+  part of the estimate that is exact.
 
-The **Playback Reporting** plugin records true per-play durations and would make
-this precise. It isn't installed on this server, and `/time` works without it.
-If you ever add it, the aggregation in `watchtime.py` is the only thing that
-would need changing.
+**The plugin does not backfill.** Its table starts empty at install time, so
+`/time` keeps using the core estimate and says how much history has accrued,
+switching over on its own once coverage is complete. Asking for a shorter
+window the plugin already covers gets exact figures sooner — `/time days:1`
+works the day after installing.
+
+One wrinkle worth knowing if you touch `watchtime.py`: Playback Reporting has
+written `DateCreated` in local time in some releases and UTC in others. Rather
+than guess, the code compares the newest row against both clocks and uses
+whichever it sits closer to. On this server it logs **local** time, so a
+hardcoded `datetime('now')` would shift the window by the UTC offset.
 
 ### Knowing which build is running
 

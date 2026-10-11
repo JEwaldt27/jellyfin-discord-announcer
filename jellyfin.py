@@ -39,6 +39,11 @@ class JellyfinError(RuntimeError):
     """Any failure talking to Jellyfin: unreachable, auth rejected, bad status."""
 
 
+class JellyfinNotFound(JellyfinError):
+    """A 404. Distinct because a missing plugin route is a normal condition,
+    not a failure - callers fall back rather than reporting an error."""
+
+
 class JellyfinClient:
     def __init__(self, base_url: str, api_key: str, timeout: int = 60):
         self.base = base_url.rstrip("/")
@@ -76,6 +81,25 @@ class JellyfinClient:
                     raise JellyfinError(
                         "Jellyfin rejected the API key (401) - check JELLYFIN_API_KEY"
                     )
+                if resp.status >= 400:
+                    raise JellyfinError(f"Jellyfin returned HTTP {resp.status} for {path}")
+                return await resp.json(content_type=None)
+        except asyncio.TimeoutError as exc:
+            raise JellyfinError(f"Jellyfin timed out on {path}") from exc
+        except aiohttp.ClientError as exc:
+            raise JellyfinError(f"Cannot reach Jellyfin at {self.base}: {exc}") from exc
+
+    async def post_json(self, path: str, body: dict) -> dict:
+        session = await self._session_for()
+        url = f"{self.base}{path}"
+        try:
+            async with session.post(url, json=body) as resp:
+                if resp.status == 401:
+                    raise JellyfinError(
+                        "Jellyfin rejected the API key (401) - check JELLYFIN_API_KEY"
+                    )
+                if resp.status == 404:
+                    raise JellyfinNotFound(f"No such endpoint: {path}")
                 if resp.status >= 400:
                     raise JellyfinError(f"Jellyfin returned HTTP {resp.status} for {path}")
                 return await resp.json(content_type=None)

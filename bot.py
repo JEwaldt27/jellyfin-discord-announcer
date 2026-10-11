@@ -624,14 +624,14 @@ def register_commands(bot: Announcer) -> None:
         # seconds on a server with many accounts.
         await interaction.response.defer(thinking=True)
         try:
-            rows = await watchtime.collect(bot.jf, days=days)
+            report = await watchtime.collect(bot.jf, days=days)
             total_users = len(await bot.jf.users())
         except JellyfinError as exc:
             await interaction.followup.send(f"❌ Couldn't reach Jellyfin: {exc}")
             return
 
         await interaction.followup.send(
-            embed=watchtime.build_embed(rows, days=days, total_users=total_users)
+            embed=watchtime.build_embed(report, days=days, total_users=total_users)
         )
 
     @tree.command(name="version", description="Which build of the bot is running")
