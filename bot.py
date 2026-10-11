@@ -48,6 +48,11 @@ log = logging.getLogger("announcer")
 TICK_SECONDS = 60
 RETRY_DELAY = timedelta(minutes=15)
 
+# /time posts to the announcement channel and is open to every member, so it
+# is rate limited per guild rather than per user - otherwise five people could
+# each post a leaderboard once and still flood the channel.
+TIME_COOLDOWN_SECONDS = 300
+
 # /imdb runs this as a subprocess rather than importing it: the script is a
 # synchronous stdlib CLI that calls sys.exit() and does blocking network and
 # filesystem I/O. A subprocess keeps all of that off the event loop and means
@@ -207,6 +212,11 @@ def command_required_role(command: app_commands.Command) -> str | None:
     of taking the command down.
     """
     for check in getattr(command, "checks", []):
+        # Not every check is a role gate. A cooldown also carries a closure,
+        # and without this would report the command as "gated, role unknown" -
+        # /help would then show a padlock on a command anyone can run.
+        if "cooldown" in getattr(check, "__qualname__", "").lower():
+            continue
         closure = getattr(check, "__closure__", None) or []
         for cell in closure:
             value = cell.cell_contents
@@ -262,8 +272,9 @@ HELP_DETAIL = {
                "the running source. Compare the fingerprint to `python "
                "version.py` on a checkout to confirm the container is actually "
                "running that code.",
-    "time": "Watch-time leaderboard for the last 7 days, or a window you "
-            "choose with `days`. Estimated from Jellyfin's playback history.",
+    "time": "Posts a watch-time leaderboard to the announcement channel for "
+            "the last 7 days, or a window you choose with `days`. Anyone can "
+            "run it, but only once every 5 minutes per server.",
     "help": "This message.",
 }
 
@@ -609,9 +620,12 @@ def register_commands(bot: Announcer) -> None:
         else:
             await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @tree.command(name="time", description="Who watched the most this week")
+    @tree.command(name="time", description="Post the watch-time leaderboard")
     @app_commands.describe(days="Days to look back (default 7, max 90)")
     @app_commands.guild_only()
+    # The leaderboard goes to the announcement channel and the command is open
+    # to everyone, so without this any member could spam that channel.
+    @app_commands.checks.cooldown(1, TIME_COOLDOWN_SECONDS, key=lambda i: i.guild_id)
     async def time_cmd(interaction: discord.Interaction, days: int = watchtime.DEFAULT_DAYS) -> None:
         if not watchtime.MIN_DAYS <= days <= watchtime.MAX_DAYS:
             await interaction.response.send_message(
@@ -620,18 +634,34 @@ def register_commands(bot: Announcer) -> None:
             )
             return
 
+        # Resolve the destination before deferring: _announce_target replies
+        # through interaction.response, which is spent once we defer.
+        channel = await _announce_target(interaction)
+        if channel is None:
+            return
+
         # One call per user plus a resume lookup, so this can take a few
         # seconds on a server with many accounts.
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             report = await watchtime.collect(bot.jf, days=days)
             total_users = len(await bot.jf.users())
         except JellyfinError as exc:
-            await interaction.followup.send(f"❌ Couldn't reach Jellyfin: {exc}")
+            await interaction.followup.send(
+                f"❌ Couldn't reach Jellyfin: {exc}", ephemeral=True
+            )
+            return
+
+        embed = watchtime.build_embed(report, days=days, total_users=total_users)
+        try:
+            posted = await announcements.send(channel, embed)
+        except AnnounceError as exc:
+            await interaction.followup.send(f"❌ {exc}", ephemeral=True)
             return
 
         await interaction.followup.send(
-            embed=watchtime.build_embed(report, days=days, total_users=total_users)
+            f"✅ Posted in {channel.mention}. [Jump to it]({posted.jump_url})",
+            ephemeral=True,
         )
 
     @tree.command(name="version", description="Which build of the bot is running")
@@ -910,6 +940,15 @@ def register_commands(bot: Announcer) -> None:
             message = f"You need the **{ADMIN_ROLE}** role to use this."
         elif isinstance(error, app_commands.MissingPermissions):
             message = "You don't have permission to use this."
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            # Also a refusal rather than a fault, so it needs its own branch
+            # for the same reason as the role check above.
+            wait = int(error.retry_after)
+            message = (
+                "That was posted recently — try again in "
+                f"{wait // 60}m {wait % 60}s." if wait >= 60
+                else f"That was posted recently — try again in {wait}s."
+            )
         else:
             log.exception("Command failed", exc_info=error)
             message = f"Something went wrong: `{error}`"

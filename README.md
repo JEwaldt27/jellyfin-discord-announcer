@@ -23,7 +23,7 @@ can use. All replies are private (only you see them).
 |---|---|---|
 | `/help` | List every command and the roles they need | anyone |
 | `/status` | Settings, last/next scan, item counts, Jellyfin health | anyone |
-| `/time [days]` | Watch-time leaderboard, default last 7 days | anyone |
+| `/time [days]` | Post a watch-time leaderboard to the announcement channel | anyone |
 | `/version` | Which build is running: version, commit, source fingerprint, uptime | anyone |
 | `/start` | Run a scan right now | anyone |
 | `/announce <message> [title]` | Post an announcement | **role** |
@@ -41,8 +41,13 @@ can use. All replies are private (only you see them).
 ### Watch time is an estimate
 
 `/time` ranks users by how much they watched, defaulting to the last 7 days.
-Unlike every other reply, it posts **to the channel** rather than privately —
-a leaderboard nobody else can see isn't much of a leaderboard.
+The leaderboard is posted to the channel set with `/channels announce`,
+wherever the command was run from; you get a private confirmation with a link
+to it.
+
+Anyone can run it, but it is limited to **once every 5 minutes per server** —
+it is an open command that writes to the announcement channel, so without a
+limit any member could flood it.
 
 It reads from one of two sources, and the footer tells you which.
 
