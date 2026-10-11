@@ -23,6 +23,7 @@ can use. All replies are private (only you see them).
 |---|---|---|
 | `/help` | List every command and the roles they need | anyone |
 | `/status` | Settings, last/next scan, item counts, Jellyfin health | anyone |
+| `/time [days]` | Watch-time leaderboard, default last 7 days | anyone |
 | `/version` | Which build is running: version, commit, source fingerprint, uptime | anyone |
 | `/start` | Run a scan right now | anyone |
 | `/announce <message> [title]` | Post an announcement | **role** |
@@ -36,6 +37,29 @@ can use. All replies are private (only you see them).
 | `/rebaseline confirm:True` | Forget what's been announced, re-record the library as the new baseline | **role** |
 
 **role** = the Discord role named in `ADMIN_ROLE` (default `Media Admin`).
+
+### Watch time is an estimate
+
+`/time` ranks users by how much they watched, defaulting to the last 7 days.
+Unlike every other reply, it posts **to the channel** rather than privately —
+a leaderboard nobody else can see isn't much of a leaderboard.
+
+The number is an estimate, and the embed says so. Jellyfin core keeps no log of
+playback events; per user per item it stores only `Played`, `PlayCount`,
+`PlaybackPositionTicks` and `LastPlayedDate` — and that date is just the *most
+recent* play. So:
+
+- Something watched three times this week counts once. `PlayCount` is all-time
+  with no dates attached, so it can't correct for that.
+- Anything marked played counts its full runtime, even if it was abandoned
+  after ten minutes or a whole season was marked watched in bulk.
+- Part-watched items contribute their real position instead. That's the one
+  part of the figure that is exact.
+
+The **Playback Reporting** plugin records true per-play durations and would make
+this precise. It isn't installed on this server, and `/time` works without it.
+If you ever add it, the aggregation in `watchtime.py` is the only thing that
+would need changing.
 
 ### Knowing which build is running
 

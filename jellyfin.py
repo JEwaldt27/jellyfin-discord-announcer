@@ -20,6 +20,10 @@ MOVIE_FIELDS = "Overview,Genres,Studios,DateCreated,ProviderIds"
 EPISODE_FIELDS = "Overview,DateCreated"
 SERIES_FIELDS = "Overview,Genres,Studios"
 
+# /time needs per-user playback state: Played, PlayCount, LastPlayedDate and
+# PlaybackPositionTicks all arrive inside UserData.
+WATCH_FIELDS = "UserData"
+
 # Content types Jellyfin can hand back for artwork, mapped to a file extension
 # because Discord picks the renderer from the attachment filename.
 _IMAGE_EXT = {
@@ -87,6 +91,22 @@ class JellyfinClient:
 
     # ----------------------------------------------------------------- items
 
+    async def users(self) -> list[dict]:
+        """Every user on the server. Needs an API key with admin rights."""
+        data = await self.get_json("/Users")
+        return data if isinstance(data, list) else []
+
+    async def resume_items(self, user_id: str, limit: int = 100) -> list[dict]:
+        """Part-watched video for one user, carrying PlaybackPositionTicks."""
+        data = await self.get_json(
+            f"/Users/{user_id}/Items/Resume",
+            limit=limit,
+            fields=WATCH_FIELDS,
+            mediaTypes="Video",
+            enableImages="false",
+        )
+        return (data.get("Items") or []) if isinstance(data, dict) else []
+
     async def items_page(
         self,
         *,
@@ -96,11 +116,15 @@ class JellyfinClient:
         limit: int = 200,
         sort_by: str = "DateCreated",
         sort_order: str = "Descending",
+        user_id: str | None = None,
+        filters: str | None = None,
     ) -> tuple[list[dict], int]:
         data = await self.get_json(
             "/Items",
             recursive="true",
             includeItemTypes=include_types,
+            userId=user_id,
+            filters=filters,
             # Jellyfin 12 collapses movies into their collections by default,
             # which returns BoxSets in place of the movies they contain. Those
             # then get announced as if they were new films. Always off.

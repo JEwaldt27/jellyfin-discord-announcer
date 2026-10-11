@@ -33,6 +33,7 @@ from announce import AnnounceError
 from httpapi import DEFAULT_PORT as ANNOUNCE_DEFAULT_PORT, AnnounceAPI
 from jellyfin import JellyfinClient, JellyfinError
 from scanner import run_scan
+import watchtime
 from version import BUILD_DATE, GIT_COMMIT, STARTED_AT, __version__, source_fingerprint
 
 try:  # convenience when running outside Docker
@@ -261,6 +262,8 @@ HELP_DETAIL = {
                "the running source. Compare the fingerprint to `python "
                "version.py` on a checkout to confirm the container is actually "
                "running that code.",
+    "time": "Watch-time leaderboard for the last 7 days, or a window you "
+            "choose with `days`. Estimated from Jellyfin's playback history.",
     "help": "This message.",
 }
 
@@ -605,6 +608,31 @@ def register_commands(bot: Announcer) -> None:
             await interaction.followup.send(embed=embed, file=note, ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @tree.command(name="time", description="Who watched the most this week")
+    @app_commands.describe(days="Days to look back (default 7, max 90)")
+    @app_commands.guild_only()
+    async def time_cmd(interaction: discord.Interaction, days: int = watchtime.DEFAULT_DAYS) -> None:
+        if not watchtime.MIN_DAYS <= days <= watchtime.MAX_DAYS:
+            await interaction.response.send_message(
+                f"❌ Pick between {watchtime.MIN_DAYS} and {watchtime.MAX_DAYS} days.",
+                ephemeral=True,
+            )
+            return
+
+        # One call per user plus a resume lookup, so this can take a few
+        # seconds on a server with many accounts.
+        await interaction.response.defer(thinking=True)
+        try:
+            rows = await watchtime.collect(bot.jf, days=days)
+            total_users = len(await bot.jf.users())
+        except JellyfinError as exc:
+            await interaction.followup.send(f"❌ Couldn't reach Jellyfin: {exc}")
+            return
+
+        await interaction.followup.send(
+            embed=watchtime.build_embed(rows, days=days, total_users=total_users)
+        )
 
     @tree.command(name="version", description="Which build of the bot is running")
     @app_commands.guild_only()
